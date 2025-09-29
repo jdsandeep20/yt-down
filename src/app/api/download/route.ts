@@ -1,43 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Readable } from 'stream';
 
-// Types for ytdl-core to ensure proper compatibility
-interface YtdlDownloadOptions {
-  quality?: string | number;
-  filter?: 'audioonly' | 'videoonly' | 'audioandvideo';
-  format?: string;
-  requestOptions?: {
-    headers?: Record<string, string>;
-  };
-}
+// Import ytdl-core types properly
+type ytdl = typeof import('@distube/ytdl-core').default;
+type videoInfo = import('@distube/ytdl-core').videoInfo;
+type downloadOptions = import('@distube/ytdl-core').downloadOptions;
+type videoFormat = import('@distube/ytdl-core').videoFormat;
 
 interface DownloadRequest {
   url: string;
-  format: {
+  format?: {
     quality: string;
     format: string;
     itag?: number;
-    type: string;
-    hasAudio?: boolean;
+    type?: string;
   };
 }
 
-interface VideoDetails {
-  title: string;
-  author?: {
-    name: string;
-  };
-  lengthSeconds?: string;
-  videoId: string;
-}
-
-interface VideoInfo {
-  videoDetails: VideoDetails;
-  formats?: unknown[];
-}
-
-// Dynamic import for serverless compatibility
-const getYtdl = async () => {
+// Dynamic import for Railway compatibility
+const getYtdl = async (): Promise<ytdl | null> => {
   try {
     const { default: ytdl } = await import('@distube/ytdl-core');
     return ytdl;
@@ -47,47 +28,76 @@ const getYtdl = async () => {
   }
 };
 
-// Helper function to create safe filename
+// Helper to sanitize filename
 const sanitizeFilename = (title: string): string => {
   return title
     .replace(/[<>:"/\\|?*]/g, '')
     .replace(/[^\w\s-]/g, '')
     .trim()
-    .substring(0, 100)
+    .substring(0, 80)
     .replace(/\s+/g, '_');
 };
 
-// Helper function to determine optimal download options
-const getDownloadOptions = (requestedQuality: string): YtdlDownloadOptions => {
-  // For audio-only requests
-  if (requestedQuality === 'Audio Only' || requestedQuality.toLowerCase().includes('audio')) {
-    return {
-      quality: 'highestaudio',
-      filter: 'audioonly'
-    };
+// Helper to choose the best format for video+audio
+const chooseBestFormat = (info: videoInfo, requestedQuality?: string): videoFormat | null => {
+  const { default: ytdl } = require('@distube/ytdl-core');
+
+  // Try to get combined video+audio format first
+  try {
+    // If specific quality requested, try to match it
+    if (requestedQuality && requestedQuality !== 'Audio Only') {
+      const qualityNumber = parseInt(requestedQuality.replace('p', ''));
+
+      // Find formats with both video and audio
+      const combinedFormats = info.formats.filter(format =>
+        format.hasVideo &&
+        format.hasAudio &&
+        format.height
+      );
+
+      if (combinedFormats.length > 0) {
+        // Try to find exact quality match
+        const exactMatch = combinedFormats.find(format =>
+          format.height === qualityNumber
+        );
+
+        if (exactMatch) return exactMatch;
+
+        // Otherwise get closest quality
+        const closest = combinedFormats.reduce((prev, curr) => {
+          const prevDiff = Math.abs((prev.height || 0) - qualityNumber);
+          const currDiff = Math.abs((curr.height || 0) - qualityNumber);
+          return currDiff < prevDiff ? curr : prev;
+        });
+
+        return closest;
+      }
+    }
+
+    // For audio only requests
+    if (requestedQuality === 'Audio Only') {
+      return ytdl.chooseFormat(info.formats, { quality: 'highestaudio' });
+    }
+
+    // Default: try to get highest quality with video+audio
+    const combined = ytdl.chooseFormat(info.formats, {
+      quality: 'highest',
+      filter: 'audioandvideo'
+    });
+
+    if (combined) return combined;
+
+    // Fallback: get highest video quality
+    return ytdl.chooseFormat(info.formats, { quality: 'highest' });
+
+  } catch (error) {
+    console.error('Error choosing format:', error);
+    // Final fallback
+    return info.formats[0] || null;
   }
-
-  // For video requests - prioritize combined audio+video formats
-  const qualityMap: Record<string, string> = {
-    '2160p': 'highest',
-    '1440p': 'highest',
-    '1080p': 'highest',
-    '720p': 'highest',
-    '480p': 'highest',
-    '360p': 'highestaudio',
-    '240p': 'lowest',
-    '144p': 'lowest'
-  };
-
-  const quality = qualityMap[requestedQuality] || 'highest';
-
-  return {
-    quality,
-    filter: 'audioandvideo'
-  };
 };
 
-// Convert stream to web-compatible ReadableStream
+// Convert Node.js stream to web-compatible ReadableStream
 const nodeStreamToWebStream = (nodeStream: Readable): ReadableStream<Uint8Array> => {
   return new ReadableStream({
     start(controller) {
@@ -100,27 +110,32 @@ const nodeStreamToWebStream = (nodeStream: Readable): ReadableStream<Uint8Array>
       });
 
       nodeStream.on('error', (error) => {
+        console.error('Stream error:', error);
         controller.error(error);
       });
+    },
+    cancel() {
+      nodeStream.destroy();
     }
   });
 };
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const { url, format }: DownloadRequest = await request.json();
+    const body: DownloadRequest = await request.json();
+    const { url, format } = body;
 
     // Validate input
-    if (!url || !format) {
+    if (!url) {
       return NextResponse.json(
-        { error: 'URL and format are required' },
+        { error: 'YouTube URL is required' },
         { status: 400 }
       );
     }
 
     const cleanUrl = url.trim();
 
-    // Validate YouTube URL
+    // Validate YouTube URL format
     if (!cleanUrl.includes('youtube.com/watch') && !cleanUrl.includes('youtu.be/')) {
       return NextResponse.json(
         { error: 'Please provide a valid YouTube URL' },
@@ -128,7 +143,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Get ytdl-core module
+    // Get ytdl-core dynamically
     const ytdl = await getYtdl();
     if (!ytdl) {
       return NextResponse.json(
@@ -145,10 +160,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    console.log('Processing download request:', { url: cleanUrl, quality: format.quality });
+    console.log('Processing download request:', { url: cleanUrl, quality: format?.quality });
 
     // Get video information with timeout
-    let videoInfo: VideoInfo;
+    let videoInfo: videoInfo;
     try {
       videoInfo = await Promise.race([
         ytdl.getInfo(cleanUrl, {
@@ -159,9 +174,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         }),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Request timeout')), 20000)
+          setTimeout(() => reject(new Error('Request timeout')), 25000)
         )
-      ]) as VideoInfo;
+      ]);
     } catch (error) {
       console.error('Failed to get video info:', error);
       return NextResponse.json(
@@ -173,49 +188,82 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const { videoDetails } = videoInfo;
     const safeTitle = sanitizeFilename(videoDetails.title);
 
-    // Determine download options
-    const downloadOptions = getDownloadOptions(format.quality);
+    // Choose the best format using ytdl.chooseFormat
+    const selectedFormat = chooseBestFormat(videoInfo, format?.quality);
 
-    console.log('Download configuration:', {
-      title: videoDetails.title,
-      quality: format.quality,
-      options: downloadOptions
+    if (!selectedFormat) {
+      return NextResponse.json(
+        { error: 'No suitable video format found for download' },
+        { status: 500 }
+      );
+    }
+
+    console.log('Selected format:', {
+      itag: selectedFormat.itag,
+      quality: selectedFormat.qualityLabel,
+      hasVideo: selectedFormat.hasVideo,
+      hasAudio: selectedFormat.hasAudio,
+      container: selectedFormat.container
     });
 
-    // Set filename and content type
-    const isAudioOnly = downloadOptions.filter === 'audioonly';
-    const fileExtension = isAudioOnly ? 'mp3' : 'mp4';
-    const contentType = isAudioOnly ? 'audio/mpeg' : 'video/mp4';
+    // Determine file extension and content type
+    const isAudioOnly = !selectedFormat.hasVideo && selectedFormat.hasAudio;
+    const fileExtension = isAudioOnly ? 'mp3' : (selectedFormat.container || 'mp4');
+    const contentType = isAudioOnly ? 'audio/mpeg' : `video/${selectedFormat.container || 'mp4'}`;
     const filename = `${safeTitle}.${fileExtension}`;
 
+    // Create download options using the selected format
+    const downloadOptions: downloadOptions = {
+      format: selectedFormat,
+      requestOptions: {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      }
+    };
+
     try {
-      // Create download stream
+      // Create the download stream
       const videoStream = ytdl(cleanUrl, downloadOptions);
 
-      // Convert to web-compatible stream for Railway
+      // Convert to web-compatible stream
       const webStream = nodeStreamToWebStream(videoStream);
 
-      // Return streaming response
+      // Return streaming response with proper headers
       return new NextResponse(webStream, {
         status: 200,
         headers: {
           'Content-Type': contentType,
           'Content-Disposition': `attachment; filename="${filename}"`,
           'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'X-Content-Type-Options': 'nosniff'
+          'X-Content-Type-Options': 'nosniff',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST',
+          'Access-Control-Allow-Headers': 'Content-Type'
         }
       });
 
     } catch (downloadError) {
-      console.error('Download failed, trying fallback:', downloadError);
+      console.error('Download failed:', downloadError);
 
-      // Fallback: try with different options
-      const fallbackOptions: YtdlDownloadOptions = {
-        quality: 'highest',
-        filter: isAudioOnly ? 'audioonly' : 'audioandvideo'
-      };
-
+      // Try fallback with different options
       try {
+        console.log('Attempting fallback download...');
+
+        const fallbackFormat = ytdl.chooseFormat(videoInfo.formats, {
+          quality: 'highest',
+          filter: format?.quality === 'Audio Only' ? 'audioonly' : undefined
+        });
+
+        const fallbackOptions: downloadOptions = {
+          format: fallbackFormat,
+          requestOptions: {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+          }
+        };
+
         const fallbackStream = ytdl(cleanUrl, fallbackOptions);
         const webStream = nodeStreamToWebStream(fallbackStream);
 
@@ -232,7 +280,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       } catch (fallbackError) {
         console.error('Fallback download also failed:', fallbackError);
         return NextResponse.json(
-          { error: 'Unable to download this video. It may be restricted or unavailable in the requested format.' },
+          { error: 'Unable to download this video. It may be restricted or unavailable.' },
           { status: 500 }
         );
       }
@@ -241,7 +289,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } catch (error) {
     console.error('Download API error:', error);
 
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
     // Handle specific error types
     if (errorMessage.includes('Video unavailable')) {
@@ -258,8 +306,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    if (errorMessage.includes('timeout')) {
+      return NextResponse.json(
+        { error: 'Request timed out. Please try again.' },
+        { status: 408 }
+      );
+    }
+
     return NextResponse.json(
-      { error: 'Download failed. Please try again or use a different video.' },
+      { error: 'Download failed. Please try again with a different video.' },
       { status: 500 }
     );
   }

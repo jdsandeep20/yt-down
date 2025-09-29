@@ -39,11 +39,16 @@ const sanitizeFilename = (title: string): string => {
 };
 
 // Helper to choose the best format for video+audio
-const chooseBestFormat = (info: videoInfo, requestedQuality?: string): videoFormat | null => {
-  const { default: ytdl } = require('@distube/ytdl-core');
+const chooseBestFormat = async (info: videoInfo, requestedQuality?: string): Promise<videoFormat | null> => {
+  const ytdl = await getYtdl();
+  if (!ytdl) return null;
 
-  // Try to get combined video+audio format first
   try {
+    // For audio only requests
+    if (requestedQuality === 'Audio Only') {
+      return ytdl.chooseFormat(info.formats, { quality: 'highestaudio' });
+    }
+
     // If specific quality requested, try to match it
     if (requestedQuality && requestedQuality !== 'Audio Only') {
       const qualityNumber = parseInt(requestedQuality.replace('p', ''));
@@ -74,11 +79,6 @@ const chooseBestFormat = (info: videoInfo, requestedQuality?: string): videoForm
       }
     }
 
-    // For audio only requests
-    if (requestedQuality === 'Audio Only') {
-      return ytdl.chooseFormat(info.formats, { quality: 'highestaudio' });
-    }
-
     // Default: try to get highest quality with video+audio
     const combined = ytdl.chooseFormat(info.formats, {
       quality: 'highest',
@@ -92,8 +92,8 @@ const chooseBestFormat = (info: videoInfo, requestedQuality?: string): videoForm
 
   } catch (error) {
     console.error('Error choosing format:', error);
-    // Final fallback
-    return info.formats[0] || null;
+    // Final fallback - return first available format
+    return info.formats && info.formats.length > 0 ? info.formats[0] : null;
   }
 };
 
@@ -189,7 +189,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const safeTitle = sanitizeFilename(videoDetails.title);
 
     // Choose the best format using ytdl.chooseFormat
-    const selectedFormat = chooseBestFormat(videoInfo, format?.quality);
+    const selectedFormat = await chooseBestFormat(videoInfo, format?.quality);
 
     if (!selectedFormat) {
       return NextResponse.json(
@@ -212,9 +212,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const contentType = isAudioOnly ? 'audio/mpeg' : `video/${selectedFormat.container || 'mp4'}`;
     const filename = `${safeTitle}.${fileExtension}`;
 
-    // Create download options using the selected format
+    // Create download options using the selected format - PROPERLY TYPED
     const downloadOptions: downloadOptions = {
-      format: selectedFormat,
+      format: selectedFormat, // This is now properly typed as videoFormat
       requestOptions: {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -255,8 +255,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           filter: format?.quality === 'Audio Only' ? 'audioonly' : undefined
         });
 
+        // Create properly typed fallback options
         const fallbackOptions: downloadOptions = {
-          format: fallbackFormat,
+          format: fallbackFormat, // This is properly typed as videoFormat
           requestOptions: {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'

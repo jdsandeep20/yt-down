@@ -11,6 +11,9 @@ const getYtdl = async () => {
   }
 };
 
+// Import types for better type safety
+type YtdlFilter = 'audioonly' | 'videoonly' | 'audioandvideo';
+
 interface DownloadRequest {
   url: string;
   format: {
@@ -38,7 +41,7 @@ interface VideoInfo {
 
 interface DownloadOptions {
   quality: string;
-  filter: string;
+  filter: YtdlFilter;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -130,7 +133,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (format.quality === 'Audio Only' || format.quality.includes('Audio')) {
       downloadOptions = {
         quality: 'highestaudio',
-        filter: 'audioonly'
+        filter: 'audioonly' as YtdlFilter
       };
     } else {
       // For video downloads, always try to get combined format first
@@ -149,7 +152,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       downloadOptions = {
         quality: ytdlQuality,
-        filter: 'audioandvideo'  // Always try combined first
+        filter: 'audioandvideo' as YtdlFilter  // Always try combined first
       };
 
       console.log(`Download config for ${format.quality}:`, downloadOptions);

@@ -8,7 +8,7 @@ restartPolicyMaxRetries = 10
 
 [service]
 allowCrash = false
-autoscaling = true
 
 [environment]
 NODE_ENV = "production"
+NEXT_TELEMETRY_DISABLED = "1"

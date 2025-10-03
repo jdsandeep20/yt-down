@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
   },
 
   // External packages for server components (Railway compatibility)
-  serverExternalPackages: ['@distube/ytdl-core', 'youtube-dl-exec', 'fluent-ffmpeg'],
+  serverExternalPackages: ['@distube/ytdl-core'],
 
   // Webpack configuration for better compatibility
   webpack: (config, { isServer }) => {
@@ -56,9 +56,6 @@ const nextConfig: NextConfig = {
 
     return config;
   },
-
-  // Server external packages moved from experimental
-  serverExternalPackages: ['@distube/ytdl-core'],
 
   // Security headers
   async headers() {

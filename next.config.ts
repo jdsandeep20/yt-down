@@ -57,11 +57,8 @@ const nextConfig: NextConfig = {
     return config;
   },
 
-  // Experimental features for Railway optimization
-  experimental: {
-    // Server components external packages
-    serverComponentsExternalPackages: ['@distube/ytdl-core'],
-  },
+  // Server external packages moved from experimental
+  serverExternalPackages: ['@distube/ytdl-core'],
 
   // Security headers
   async headers() {

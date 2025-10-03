@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Readable } from 'stream';
 
 // Import ytdl-core types properly
-type ytdl = typeof import('@distube/ytdl-core').default;
-type videoInfo = import('@distube/ytdl-core').videoInfo;
-type downloadOptions = import('@distube/ytdl-core').downloadOptions;
-type videoFormat = import('@distube/ytdl-core').videoFormat;
+import type { videoInfo, downloadOptions, videoFormat } from '@distube/ytdl-core';
 
 interface DownloadRequest {
   url: string;
@@ -18,7 +15,7 @@ interface DownloadRequest {
 }
 
 // Dynamic import for Railway compatibility
-const getYtdl = async (): Promise<ytdl | null> => {
+const getYtdl = async () => {
   try {
     const { default: ytdl } = await import('@distube/ytdl-core');
     return ytdl;

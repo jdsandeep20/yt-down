@@ -1,0 +1,9 @@
+# Force Railway to ignore Nixpacks detection
+package.json
+package-lock.json
+node_modules/
+.next/
+src/
+*.js
+*.ts
+*.tsx

@@ -1,30 +1,48 @@
-# Use Node.js 22 Alpine for smaller image
-FROM node:22-alpine
+# Multi-stage build for production optimization
+FROM node:22-alpine AS base
 
-# Set working directory
+# Install dependencies only when needed
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
-
-# Install ALL dependencies (including devDependencies for build)
+COPY package.json package-lock.json* ./
 RUN npm ci
 
-# Copy source code (respecting .dockerignore)
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# Disable Next.js telemetry during build
+ENV NEXT_TELEMETRY_DISABLED 1
 
 # Build the application
 RUN npm run build
 
-# Remove dev dependencies after build
-RUN npm prune --production
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
 
-# Expose port (Railway will override this)
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy built application
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+# Expose port
 EXPOSE 3000
 
-# Set environment
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT 3000
 
 # Start the application
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

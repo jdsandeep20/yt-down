@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
-  // Optimize for production deployment on Railway
+  // Optimize for production deployment on Railway with Docker
   output: 'standalone',
 
   // Performance optimizations
